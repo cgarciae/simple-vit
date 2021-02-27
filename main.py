@@ -25,7 +25,6 @@ class ViT(elegy.Module):
         num_layers: int,
         num_heads: int,
         dropout: float,
-        use_conv: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -33,39 +32,38 @@ class ViT(elegy.Module):
         self.num_layers = num_layers
         self.num_heads = num_heads
         self.dropout = dropout
-        self.use_conv = use_conv
 
     def call(self, x: jnp.ndarray):
+        batch_size = x.shape[0]
+
+        # normalize data
         x = x.astype(jnp.float32) / 255.0
 
-        if self.use_conv:
-            x = x[..., None]
-            x = elegy.nn.Conv2D(self.size, [7, 7], stride=4, padding="valid")(x)
-            x = einops.rearrange(x, "batch h w d -> batch (h w) d")
-        else:
-            x = einops.rearrange(
-                x, "batch (h1 h2) (w1 w2) -> batch (h1 w1) (h2 w2)", h1=4, w1=4
-            )
-            x = elegy.nn.Linear(self.size)(x)
+        # make patch embeddings
+        x = einops.rearrange(
+            x, "batch (h1 h2) (w1 w2) -> batch (h1 w1) (h2 w2)", h2=7, w2=7
+        )
+        x = elegy.nn.Linear(self.size)(x)
 
-        # zeros is the predict token padding
-        zeros = jnp.zeros(shape=[x.shape[0], 1, x.shape[-1]])
+        # add predict token
+        predict_token = jnp.zeros(shape=[batch_size, 1, self.size])
+        x = jnp.concatenate([predict_token, x], axis=1)
 
-        x = jnp.concatenate([zeros, x], axis=1)
-
+        # create positional embeddings
         positional_embeddings = self.add_parameter(
             "positional_embeddings",
             lambda: elegy.initializers.TruncatedNormal()(x.shape[-2:], jnp.float32),
         )
-
         positional_embeddings = einops.repeat(
             positional_embeddings,
             "... -> batch ...",
-            batch=x.shape[0],
+            batch=batch_size,
         )
 
+        # add positional embeddings
         x = x + positional_embeddings
 
+        # apply N transformers encoder layers
         x = elegy.nn.transformers.TransformerEncoder(
             lambda: elegy.nn.transformers.TransformerEncoderLayer(
                 head_size=self.size,
@@ -75,8 +73,10 @@ class ViT(elegy.Module):
             num_layers=self.num_layers,
         )(x)
 
+        # get predict output token
         x = x[:, 0]
 
+        # apply predict head
         logits = elegy.nn.Linear(10)(x)
 
         return logits
@@ -93,7 +93,6 @@ def main(
     num_layers: int = 3,
     num_heads: int = 8,
     dropout: float = 0.0,
-    use_conv: bool = False,
 ):
 
     if debug:
@@ -119,7 +118,6 @@ def main(
             num_layers=num_layers,
             num_heads=num_heads,
             dropout=dropout,
-            use_conv=use_conv,
         ),
         loss=[
             elegy.losses.SparseCategoricalCrossentropy(from_logits=True),
