@@ -64,8 +64,8 @@ class ViT(elegy.Module):
         x = x + positional_embeddings
 
         # apply N transformers encoder layers
-        x = elegy.nn.transformers.TransformerEncoder(
-            lambda: elegy.nn.transformers.TransformerEncoderLayer(
+        x = elegy.nn.TransformerEncoder(
+            lambda: elegy.nn.TransformerEncoderLayer(
                 head_size=self.size,
                 num_heads=self.num_heads,
                 dropout=self.dropout,
